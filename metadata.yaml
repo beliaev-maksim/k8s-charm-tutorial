@@ -21,6 +21,10 @@ requires:
     interface: postgresql_client
     limit: 1
 
+peers:
+  fastapi-peer:
+    interface: fastapi_demo_peers
+
 # The containers and resources metadata apply to Kubernetes charms only.
 # Remove them if not required.
 

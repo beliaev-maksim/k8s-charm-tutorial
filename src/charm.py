@@ -11,8 +11,9 @@ develop a new k8s charm using the Operator Framework:
 
     https://discourse.charmhub.io/t/4208
 """
-
+import json
 import logging
+from typing import Any
 
 import requests
 from charms.data_platform_libs.v0.database_requires import DatabaseCreatedEvent, DatabaseRequires
@@ -24,13 +25,14 @@ from ops.pebble import Layer
 # Log messages can be retrieved using juju debug-log
 logger = logging.getLogger(__name__)
 
+PEER_NAME = "fastapi-peer"
+
 
 class FastAPIDemoCharm(CharmBase):
     """Charm the service."""
 
     def __init__(self, *args):
         super().__init__(*args)
-        self.app_environment = {}
         self.pebble_service_name = "fastapi-service"
         self.container = self.unit.get_container(
             "demo-server"
@@ -39,6 +41,7 @@ class FastAPIDemoCharm(CharmBase):
         self.database = DatabaseRequires(self, relation_name="database", database_name="names_db")
         self.framework.observe(self.database.on.database_created, self._on_database_created)
         self.framework.observe(self.database.on.endpoints_changed, self._on_database_created)
+        self.framework.observe(self.on.database_relation_joined, self._on_database_created)
         self.framework.observe(
             self.on.database_relation_broken, self._on_database_relation_removed
         )
@@ -46,29 +49,68 @@ class FastAPIDemoCharm(CharmBase):
         self.framework.observe(self.on.demo_server_pebble_ready, self._update_layer_and_restart)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
 
+    @property
+    def peers(self):
+        """Fetch the peer relation."""
+        return self.model.get_relation(PEER_NAME)
+
+    def set_peer_data(self, key: str, data: Any) -> None:
+        """Put information into the peer data bucket instead of `StoredState`."""
+        self.peers.data[self.app][key] = json.dumps(data)
+
+    def get_peer_data(self, key: str) -> dict[Any, Any]:
+        """Retrieve information from the peer data bucket instead of `StoredState`."""
+        if not self.peers:
+            return {}
+        data = self.peers.data[self.app].get(key, "")
+        return json.loads(data) if data else {}
+
+    @property
+    def app_environment(self):
+        """Create application environment variables dict from peer data."""
+        db_data = self.get_peer_data("db_data")
+        env = {
+            "DEMO_SERVER_DB_HOST": db_data.get("db_host", None),
+            "DEMO_SERVER_DB_PORT": db_data.get("db_port", None),
+            "DEMO_SERVER_DB_USER": db_data.get("db_username", None),
+            "DEMO_SERVER_DB_PASSWORD": db_data.get("db_password", None),
+        }
+        return env
+
+    def fetch_postgres_relation_data(self):
+        """Fetch postgres relation data and update peer relation databag."""
+        data = self.database.fetch_relation_data()
+        logger.debug("Got following database data: %s", data)
+        for key, val in data.items():
+            if not val:
+                continue
+            logger.info("New PSQL database endpoint is %s", val["endpoints"])
+            host, port = val["endpoints"].split(":")
+            self.set_peer_data(
+                "db_data",
+                {
+                    "db_host": host,
+                    "db_port": port,
+                    "db_username": val["username"],
+                    "db_password": val["password"],
+                },
+            )
+            return
+
     def _on_database_created(self, event: DatabaseCreatedEvent) -> None:
-        """Set `app_environment` with info from database charm and update pebble layer.
+        """Fetch info from database charm and update pebble layer.
 
         Event is fired when postgres database was created.
         """
-        logger.info("New PSQL database endpoint is %s", event.endpoints)
-        host, port = event.endpoints.split(":")
-        self.app_environment = {
-            "DEMO_SERVER_DB_HOST": host,
-            "DEMO_SERVER_DB_PORT": port,
-            "DEMO_SERVER_DB_USER": event.username,
-            "DEMO_SERVER_DB_PASSWORD": event.password,
-        }
-
+        self.fetch_postgres_relation_data()
         self._update_layer_and_restart(None)
 
     def _on_database_relation_removed(self, event) -> None:
-        """Reset `app_environment` and put charm into waiting status.
+        """Reset peer data and put charm into waiting status.
 
         Event is fired when relation with postgres is broken.
         """
-        self.app_environment = {}
-
+        self.set_peer_data("db_data", {})
         self.unit.status = WaitingStatus("Waiting for database relation")
 
     def _on_config_changed(self, event):

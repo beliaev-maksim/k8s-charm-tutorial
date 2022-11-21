@@ -49,6 +49,9 @@ class FastAPIDemoCharm(CharmBase):
         self.framework.observe(self.on.demo_server_pebble_ready, self._update_layer_and_restart)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
 
+        # events on custom actions that are run via 'juju run-action'
+        self.framework.observe(self.on.get_db_info_action, self._on_get_db_info_action)
+
     @property
     def peers(self):
         """Fetch the peer relation."""
@@ -122,6 +125,29 @@ class FastAPIDemoCharm(CharmBase):
             return
 
         self._update_layer_and_restart(None)
+
+    def _on_get_db_info_action(self, event) -> None:
+        """Show information about database access points.
+
+        Learn more about actions at https://juju.is/docs/sdk/actions
+        """
+        show_password = event.params["show-password"]  # see actions.yaml
+        db_data = self.get_peer_data("db_data")
+
+        output = {
+            "db-host": db_data.get("db_host", None),
+            "db-port": db_data.get("db_port", None),
+        }
+
+        if show_password:
+            output.update(
+                {
+                    "db-username": db_data.get("db_username", None),
+                    "db-password": db_data.get("db_password", None),
+                }
+            )
+
+        event.set_results(output)
 
     def _update_layer_and_restart(self, event) -> None:
         """Define and start a workload using the Pebble API.

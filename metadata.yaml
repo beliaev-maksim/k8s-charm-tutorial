@@ -20,6 +20,16 @@ requires:
   database:
     interface: postgresql_client
     limit: 1
+  logging:
+    interface: loki_push_api
+    limit: 1
+
+provides:
+  metrics-endpoint:
+    interface: prometheus_scrape
+  grafana-dashboard:
+    interface: grafana_dashboard
+
 
 peers:
   fastapi-peer:
@@ -42,5 +52,5 @@ resources:
     description: OCI image from GitHub Container Repository
     # The upstream-source field is ignored by Juju. It is included here as a reference
     # so the integration testing suite knows which image to deploy during testing. This field
-    # is also used by the 'canonical/charming-actions' Github action for automated releasing.
+    # is also used by the 'canonical/charming-actions' GitHub action for automated releasing.
     upstream-source: ghcr.io/beliaev-maksim/api_demo_server:0.0.9
